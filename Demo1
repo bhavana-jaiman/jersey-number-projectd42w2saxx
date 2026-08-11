@@ -1,0 +1,5 @@
+echo "Images:"
+find datasets/for_synthetic_dataset/JerseyNumber_Validation_Dataset -name "*.jpg" | wc -l
+
+echo "Labels:"
+find datasets/for_synthetic_dataset/JerseyNumber_Validation_Dataset -name "*.txt" | wc -l
