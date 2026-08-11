@@ -1,0 +1,65 @@
+python3 - <<'PY'
+import json
+import shutil
+from pathlib import Path
+
+src = Path("datasets/JerseyNumber_Validation_Dataset")
+dst = Path("datasets/for_synthetic_dataset/JerseyNumber_Validation_Dataset")
+
+dst.mkdir(parents=True, exist_ok=True)
+
+count = 0
+
+for json_file in (src / "labels").glob("*.json"):
+    try:
+        data = json.load(open(json_file))
+
+        # Image
+        image_file = src / "images" / f"{json_file.stem}.jpg"
+
+        if not image_file.exists():
+            print(f"Image missing: {image_file.name}")
+            continue
+
+        # Image dimensions
+        w, h = data["dimensions"]
+
+        # Jersey data
+        jersey = data["data"]["jersey"]
+        if isinstance(jersey, list):
+            jersey = jersey[0]
+
+        numbers = jersey["numbers"]
+
+        # Copy image
+        shutil.copy2(image_file, dst / image_file.name)
+
+        # Create TXT beside image
+        txt_file = dst / f"{json_file.stem}.txt"
+
+        with open(txt_file, "w") as f:
+            for item in numbers:
+                digit = item["digits"]
+                x, y, bw, bh = item["rect"]
+
+                cx = (x + bw / 2) / w
+                cy = (y + bh / 2) / h
+                nw = bw / w
+                nh = bh / h
+
+                f.write(
+                    f"{digit} {cx:.6f} {cy:.6f} "
+                    f"{nw:.6f} {nh:.6f}\n"
+                )
+
+        count += 1
+
+        if count % 100 == 0:
+            print(f"Processed {count} images...")
+
+    except Exception as e:
+        print(f"ERROR: {json_file.name}: {e}")
+
+print(f"\nDONE! Created {count} image + label pairs.")
+print(f"Output folder: {dst}")
+PY
