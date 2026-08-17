@@ -1,0 +1,1 @@
+echo "Images:" $(find training_dataset_Ying -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.bmp" -o -iname "*.webp" \) | wc -l); echo "Labels:" $(find training_dataset_Ying -type f -iname "*.txt" | wc -l)
