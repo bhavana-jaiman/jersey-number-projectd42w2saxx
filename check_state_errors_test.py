@@ -112,7 +112,7 @@ def crop_region(img_bgr, x1, y1, x2, y2, size):
     return crop, (x1, y1, x2, y2)
 
 
-def make_input(img_bgr, body, rects_abs, mode, margins, size):
+def make_input(img_bgr, body, rects_abs, mode, margins, size, rel_margins=None):
     bx, by, bw, bh = body
     if mode == "body" or not rects_abs:
         return crop_region(img_bgr, bx, by, bx + bw, by + bh, size)
@@ -120,7 +120,12 @@ def make_input(img_bgr, body, rects_abs, mode, margins, size):
     y1 = min(r[1] for r in rects_abs)
     x2 = max(r[0] + r[2] for r in rects_abs)
     y2 = max(r[1] + r[3] for r in rects_abs)
-    ml, mt, mr, mb = margins
+    if mode == "number_rel":
+        # margins proportional to the digit height -> same digits/crop ratio as training
+        H = y2 - y1
+        ml, mt, mr, mb = [f * H for f in rel_margins]
+    else:
+        ml, mt, mr, mb = margins
     return crop_region(img_bgr, x1 - ml, y1 - mt, x2 + mr, y2 + mb, size)
 
 
@@ -159,8 +164,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--test_image_path", required=True, help="folder with images/ and labels/ (json)")
-    ap.add_argument("--crop", default="number", choices=["number", "body"],
-                    help="same meaning as in test_New_2.py")
+    ap.add_argument("--crop", default="number", choices=["number", "number_rel", "body"],
+                    help="number = fixed pixel margins (like test_New_2.py); "
+                         "number_rel = margins relative to digit height (--rel_margins); body = body box")
+    ap.add_argument("--rel_margins", type=float, nargs=4, default=None,
+                    metavar=("LEFT", "TOP", "RIGHT", "BOTTOM"),
+                    help="for --crop number_rel: margins as a fraction of the digit height "
+                         "(get them from measure_crop_ratio.py)")
     ap.add_argument("--margins", type=int, nargs=4, default=[23, 30, 30, 33],
                     help="left top right bottom (number crop), same as training")
     ap.add_argument("--digit_coords", default="auto", choices=["auto", "image", "body"])
@@ -168,6 +178,8 @@ def main():
     ap.add_argument("--out", default="state_errors_test")
     ap.add_argument("--max_save", type=int, default=1000, help="max error pictures to save")
     opt = ap.parse_args()
+    if opt.crop == "number_rel" and opt.rel_margins is None:
+        ap.error("--crop number_rel needs --rel_margins (run measure_crop_ratio.py first)")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(opt.checkpoint, device)
@@ -204,7 +216,8 @@ def main():
                 body, state, digits, rects = build_targets(entry)
                 rects_abs, relative = to_abs(rects, body, opt.digit_coords)
                 relative_used += relative
-                crop, crop_box = make_input(img, body, rects_abs, opt.crop, opt.margins, opt.img_size)
+                crop, crop_box = make_input(img, body, rects_abs, opt.crop, opt.margins, opt.img_size,
+                                             opt.rel_margins)
                 if crop is None:
                     skipped += 1
                     continue
