@@ -10,7 +10,11 @@ Only the cross-validated gain counts.
 
 Run:
   python calibrate_digits.py --pkl test_79.74.pkl
+Also tries smaller bias limits (+-0.25 / +-0.5 / +-1.0): smaller biases over-fit less.
+Writes digit_bias.json = average of the half-A and half-B fits (at the limit with the
+best cross-validated gain) -> bake it with bake_digit_bias.py
 """
+import json
 import argparse
 import pickle
 import zlib
@@ -20,13 +24,14 @@ import numpy as np
 ap = argparse.ArgumentParser()
 ap.add_argument("--pkl", required=True)
 ap.add_argument("--passes", type=int, default=3)
+ap.add_argument("--out", default="digit_bias.json")
 opt = ap.parse_args()
 
 D = [d for d in pickle.load(open(opt.pkl, "rb")) if d["n"] <= 2]     # 2-digit accuracy uses n <= 2 only
 d1 = np.array([d["d1"] for d in D]); d2 = np.array([d["d2"] for d in D])
 L1 = np.stack([d["l1"] for d in D]); L2 = np.stack([d["l2"] for d in D])
 half = np.array([zlib.crc32(d["img"].encode()) % 2 for d in D])
-GRID = np.round(np.arange(-1.0, 1.01, 0.125), 3)
+GRID = None
 
 
 def acc(b1, b2, m):
@@ -34,7 +39,7 @@ def acc(b1, b2, m):
 
 
 def fit(m):
-    b1, b2 = np.zeros(10), np.zeros(11)
+    b1, b2 = np.zeros(10), np.zeros(11)   # uses global GRID
     for _ in range(opt.passes):
         for b, k in [(b1, c) for c in range(10)] + [(b2, c) for c in range(11)]:
             best_v, best_a = b[k], acc(b1, b2, m)
@@ -48,20 +53,26 @@ def fit(m):
 
 
 A, B, ALL = half == 0, half == 1, np.ones(len(D), bool)
+Z1, Z2 = np.zeros(10), np.zeros(11)
 print(f"1-2 digit bodies: {len(D)} (half A {A.sum()}, half B {B.sum()})")
-print(f"no bias:   all {acc(np.zeros(10), np.zeros(11), ALL):.2f} | A {acc(np.zeros(10), np.zeros(11), A):.2f} | B {acc(np.zeros(10), np.zeros(11), B):.2f}")
-
-bA = fit(A); bB = fit(B)
-gB = acc(*bA, B) - acc(np.zeros(10), np.zeros(11), B)
-gA = acc(*bB, A) - acc(np.zeros(10), np.zeros(11), A)
-print("\n=== honest estimate (2-fold cross-validation) ===")
-print(f"fit on A -> B: {acc(np.zeros(10), np.zeros(11), B):.2f} -> {acc(*bA, B):.2f}  ({gB:+.2f})")
-print(f"fit on B -> A: {acc(np.zeros(10), np.zeros(11), A):.2f} -> {acc(*bB, A):.2f}  ({gA:+.2f})")
-cv = (gA * A.sum() + gB * B.sum()) / len(D)
-print(f"cross-validated gain: {cv:+.2f} points  <- this is the number to trust")
-
-b1, b2 = fit(ALL)
-print("\n=== fitted on ALL test bodies (optimistic, for reference) ===")
-print(f"2-digit: {acc(np.zeros(10), np.zeros(11), ALL):.2f} -> {acc(b1, b2, ALL):.2f}")
+print(f"no bias:   all {acc(Z1, Z2, ALL):.2f} | A {acc(Z1, Z2, A):.2f} | B {acc(Z1, Z2, B):.2f}")
+print("\n=== honest estimate (2-fold cross-validation) per bias limit ===")
+res = []
+for lim in (0.25, 0.5, 1.0):
+    GRID = np.round(np.arange(-lim, lim + 1e-9, 0.125), 3)
+    bA, bB = fit(A), fit(B)
+    gB = acc(*bA, B) - acc(Z1, Z2, B)
+    gA = acc(*bB, A) - acc(Z1, Z2, A)
+    cv = (gA * A.sum() + gB * B.sum()) / len(D)
+    avg = ((bA[0] + bB[0]) / 2, (bA[1] + bB[1]) / 2)
+    res.append((cv, lim, avg))
+    print(f"limit +-{lim:.2f}: A->B {gB:+.2f} | B->A {gA:+.2f} | cross-validated gain {cv:+.2f}"
+          f" | averaged A/B biases on all: {acc(*avg, ALL):.2f}")
+cv, lim, (b1, b2) = max(res, key=lambda r: r[0])
+print(f"\nchosen: limit +-{lim:.2f} (best cross-validated gain {cv:+.2f})")
+print(f"2-digit with averaged A/B biases (all test bodies): {acc(Z1, Z2, ALL):.2f} -> {acc(b1, b2, ALL):.2f}")
+print(f"realistic expectation on new data: about {acc(Z1, Z2, ALL) + cv:.2f}")
 print("digit1 bias:", " ".join(f"{v:+.3f}" for v in b1))
 print("digit2 bias:", " ".join(f"{v:+.3f}" for v in b2), "(last = blank)")
+json.dump({"digit1": [float(v) for v in b1], "digit2": [float(v) for v in b2]}, open(opt.out, "w"))
+print("saved ->", opt.out)
